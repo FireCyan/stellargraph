@@ -382,10 +382,12 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
         schema=None,
         seed=None,
         name=None,
+        weighted_feat=False ##### Added by John #####
     ):
         super().__init__(G, batch_size, schema)
         self.num_samples = num_samples
         self.name = name
+        self.weighted_feat = weighted_feat ##### Added by John #####
 
         # This is a link generator and requires two nodes per query
         if head_node_types is None:
@@ -413,6 +415,35 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
         self.sampler = SampledHeterogeneousBreadthFirstWalk(
             G, graph_schema=self.schema, seed=seed
         )
+    
+    ##### Added by John #####
+    def _get_weight(self, head_node, list_node_samples, use_ilocs=False):
+        """
+        Get the weights (which is the edge weight, i.e. rating; number of bought per user-item pair) from the head node to all its sampled nodes
+        Args:
+            head_node: the source node to get the edge weights wtih
+            list_node_samples: the list of destination nodes to get the edge weights with
+        Returns:
+            A list of weights between the source head node and the detination nodes            
+        """
+        list_weight = []
+        for node in list_node_samples:
+            if node == -1: # means there are no neighbour nodes, i.e., the head node does not have any connection
+                list_weight.append(0)
+            else:
+                # A node may be sampled several times. To adjust that, divide by the total number of the node in the list_node_samples
+                
+
+                # TODO: divide by the number of nodes occuring?
+                # list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0]/list_node_samples.count(node))
+                list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0])
+
+            # Divide by the total weight
+            total_weight = sum(list_weight)/len(list_weight)
+            list_weight = [x/total_weight for x in list_weight]
+            
+        return list_weight
+        
 
     def _get_features(self, node_samples, head_size, use_ilocs=False):
         """
@@ -428,10 +459,78 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
         # Note the if there are no samples for a node a zero array is returned.
         # Resize features to (batch_size, n_neighbours, feature_size)
         # for each node type (note that we can have different feature size for each node type)
-        batch_feats = [
-            self.graph.node_features(layer_nodes, nt, use_ilocs=use_ilocs)
-            for nt, layer_nodes in node_samples
-        ]
+        
+        ##### Added by John #####
+        """
+        node_samples is a little complex. Will use the BWS project and num_sample = [8, 8] to do the coding.
+        That means, to make this part compatible with our num_sample, need to adapt the code further in the future
+        node_samples[0] to node_samples[5] represent features for different node layer (and different node types)
+        (also note that node_samples[n][0] is the node type, node_samples[n][1] is the actual list of nodes)
+            0: 0th layer for user. Basically the head user node (Dimension = head_size)
+            1: 0th layer for item. Basically the head item node (Dimension = head_size)
+            2: 1st layer of user's neighbour nodes (would be all item nodes). Given num_sample[0] = 8, there would be 8 neighbours for each head node (Dimension = head_size x num_sample[0])
+            3: 1st layer of item's neighbour nodes (would be all user nodes). Given num_sample[0] = 8, there would be 8 neighbours for each head node (Dimension = head_size x num_sample[0])
+            4: 2nd layer of user's neighbours' neighbour nodes (user -> item -> user). Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples)
+            5: 2nd layer of item's neighbours' neighbour nodes (item -> user -> item). Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples)
+        """
+        if self.weighted_feat:
+            batch_feats = []
+            
+            for i in range(len(node_samples)):
+                nt = node_samples[i][0]
+                layer_nodes = node_samples[i][1]
+                if i in (0, 1): # user or item own head node. No weights required
+                    batch_feats.append(self.graph.node_features(layer_nodes, nt, use_ilocs=use_ilocs))
+                    if i == 0:
+                        user_head_nodes = layer_nodes # used for i == 2
+                    else:
+                        item_head_nodes = layer_nodes # used for i == 3
+                elif i in (2, 3): # 1st layer user neighbours
+                    # For loop through each user head node
+                    if i == 2:
+                        temp_head_nodes = user_head_nodes 
+                        user_1st_nb_head_nodes = layer_nodes # used for i == 4
+                    elif i == 3:
+                        temp_head_nodes = item_head_nodes
+                        item_1st_nb_head_nodes = layer_nodes # used for i == 5
+                    for j in range(len(temp_head_nodes)):
+                        h_node = temp_head_nodes[j]
+                        layer_1_num = self.num_samples[0]                        
+                        list_temp_sampled = layer_nodes[(j*layer_1_num):((j+1)*layer_1_num)]
+                        list_weight = self._get_weight(h_node, list_temp_sampled, use_ilocs=use_ilocs)
+
+                        # Get the features from the list_temp_sampled
+                        temp_feat = self.graph.node_features(list_temp_sampled, nt, use_ilocs=use_ilocs)
+                        n_feat = temp_feat.shape[1]
+                        # Broadcast the weight of the node for multiplication
+                        list_weight_broadcast = np.repeat(list_weight, n_feat).reshape(layer_1_num, n_feat)
+
+                        batch_feats.append(list_weight_broadcast*temp_feat)
+
+                elif i in (4, 5): # 2nd layer user neighbours
+                    if i == 4:
+                        temp_head_nodes = user_1st_nb_head_nodes # Note this would be item nodes (user's neighbours are items)
+                    elif i == 5:
+                        temp_head_nodes = item_1st_nb_head_nodes # Note this would be user nodes (item's neighbours are users)
+                    for j in range(len(temp_head_nodes)):
+                        h_node = temp_head_nodes[j]
+                        layer_1_num = self.num_samples[1]                        
+                        list_temp_sampled = layer_nodes[(j*layer_1_num):((j+1)*layer_1_num)]
+                        list_weight = self._get_weight(h_node, list_temp_sampled, use_ilocs=use_ilocs)
+
+                        # Get the features from the list_temp_sampled
+                        temp_feat = self.graph.node_features(list_temp_sampled, nt, use_ilocs=use_ilocs)
+                        n_feat = temp_feat.shape[1]
+                        # Broadcast the weight of the node for multiplication
+                        list_weight_broadcast = np.repeat(list_weight, n_feat).reshape(layer_1_num, n_feat)
+
+                        batch_feats.append(list_weight_broadcast*temp_feat)
+            
+        else:        
+            batch_feats = [
+                self.graph.node_features(layer_nodes, nt, use_ilocs=use_ilocs) # nt = node type
+                for nt, layer_nodes in node_samples
+            ]
 
         # Resize features to (batch_size, n_neighbours, feature_size)
         batch_feats = [np.reshape(a, (head_size, -1, a.shape[1])) for a in batch_feats]
@@ -486,7 +585,8 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
             tuple((ab[0][0], reduce(operator.concat, (ab[0][1], ab[1][1]))))
             for ab in zip(nodes_by_type[0], nodes_by_type[1])
         ]
-
+        
+        
         batch_feats = self._get_features(nodes_by_type, len(head_links), use_ilocs=True)
 
         return batch_feats
