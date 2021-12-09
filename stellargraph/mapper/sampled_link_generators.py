@@ -438,9 +438,10 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
                 # list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0]/list_node_samples.count(node))
                 list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0])
 
-            # Divide by the total weight
-            total_weight = sum(list_weight)/len(list_weight)
-            list_weight = [x/total_weight for x in list_weight]
+        # Divide by the total weight
+        # total_weight = sum(list_weight)/len(list_weight)
+        # if not total_weight == 0:
+        #     list_weight = [x/total_weight for x in list_weight]
             
         return list_weight
         
@@ -477,6 +478,7 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
             batch_feats = []
             
             for i in range(len(node_samples)):
+                temp_batch_feats = []
                 nt = node_samples[i][0]
                 layer_nodes = node_samples[i][1]
                 if i in (0, 1): # user or item own head node. No weights required
@@ -505,7 +507,9 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
                         # Broadcast the weight of the node for multiplication
                         list_weight_broadcast = np.repeat(list_weight, n_feat).reshape(layer_1_num, n_feat)
 
-                        batch_feats.append(list_weight_broadcast*temp_feat)
+                        temp_batch_feats.extend(list_weight_broadcast*temp_feat)
+
+                    batch_feats.append(np.array(temp_batch_feats))
 
                 elif i in (4, 5): # 2nd layer user neighbours
                     if i == 4:
@@ -514,17 +518,19 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
                         temp_head_nodes = item_1st_nb_head_nodes # Note this would be user nodes (item's neighbours are users)
                     for j in range(len(temp_head_nodes)):
                         h_node = temp_head_nodes[j]
-                        layer_1_num = self.num_samples[1]                        
-                        list_temp_sampled = layer_nodes[(j*layer_1_num):((j+1)*layer_1_num)]
+                        layer_2_num = self.num_samples[1]                        
+                        list_temp_sampled = layer_nodes[(j*layer_2_num):((j+1)*layer_2_num)]
                         list_weight = self._get_weight(h_node, list_temp_sampled, use_ilocs=use_ilocs)
 
                         # Get the features from the list_temp_sampled
                         temp_feat = self.graph.node_features(list_temp_sampled, nt, use_ilocs=use_ilocs)
                         n_feat = temp_feat.shape[1]
                         # Broadcast the weight of the node for multiplication
-                        list_weight_broadcast = np.repeat(list_weight, n_feat).reshape(layer_1_num, n_feat)
+                        list_weight_broadcast = np.repeat(list_weight, n_feat).reshape(layer_2_num, n_feat)
 
-                        batch_feats.append(list_weight_broadcast*temp_feat)
+                        temp_batch_feats.extend(list_weight_broadcast*temp_feat)
+
+                    batch_feats.append(np.array(temp_batch_feats))
             
         else:        
             batch_feats = [
