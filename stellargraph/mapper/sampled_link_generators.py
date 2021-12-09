@@ -471,8 +471,8 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
             1: 0th layer for item. Basically the head item node (Dimension = head_size)
             2: 1st layer of user's neighbour nodes (would be all item nodes). Given num_sample[0] = 8, there would be 8 neighbours for each head node (Dimension = head_size x num_sample[0])
             3: 1st layer of item's neighbour nodes (would be all user nodes). Given num_sample[0] = 8, there would be 8 neighbours for each head node (Dimension = head_size x num_sample[0])
-            4: 2nd layer of user's neighbours' neighbour nodes (user -> item -> user). Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples)
-            5: 2nd layer of item's neighbours' neighbour nodes (item -> user -> item). Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples)
+            4: 2nd layer of user's neighbours' neighbour nodes (user -> item -> user). Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples[1])
+            5: 2nd layer of item's neighbours' neighbour nodes (item -> user -> item). Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples[1])
         """
         if self.weighted_feat:
             batch_feats = []

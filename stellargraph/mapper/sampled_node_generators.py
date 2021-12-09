@@ -484,11 +484,13 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
         schema=None,
         seed=None,
         name=None,
+        weighted_feat=False ##### Added by John #####
     ):
         super().__init__(G, batch_size, schema=schema)
 
         self.num_samples = num_samples
         self.name = name
+        self.weighted_feat = weighted_feat ##### Added by John #####
 
         # The head node type
         if head_node_type is None:
@@ -513,6 +515,106 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
         self.sampler = SampledHeterogeneousBreadthFirstWalk(
             G, graph_schema=self.schema, seed=seed
         )
+
+    ##### Added by John #####
+    def _get_weight(self, head_node, list_node_samples, use_ilocs=False):
+        """
+        Get the weights (which is the edge weight, i.e. rating; number of bought per user-item pair) from the head node to all its sampled nodes
+        Args:
+            head_node: the source node to get the edge weights wtih
+            list_node_samples: the list of destination nodes to get the edge weights with
+        Returns:
+            A list of weights between the source head node and the detination nodes            
+        """
+        list_weight = []
+        for node in list_node_samples:
+            if node == -1: # means there are no neighbour nodes, i.e., the head node does not have any connection
+                list_weight.append(0)
+            else:
+                # A node may be sampled several times. To adjust that, divide by the total number of the node in the list_node_samples
+                
+
+                # TODO: divide by the number of nodes occuring?
+                # list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0]/list_node_samples.count(node))
+                list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0])
+
+        # Divide by the total weight
+        # total_weight = sum(list_weight)/len(list_weight)
+        # if not total_weight == 0:
+        #     list_weight = [x/total_weight for x in list_weight]
+            
+        return list_weight
+        
+
+    def _get_features(self, node_samples, head_size, use_ilocs=False):
+        """
+        Collect features from sampled nodes.
+        Args:
+            node_samples: A list of lists of node IDs
+            head_size: The number of head nodes (typically the batch size).
+
+        Returns:
+            A list of numpy arrays that store the features for each head node.
+        """
+        # Note the if there are no samples for a node a zero array is returned.
+        # Resize features to (batch_size, n_neighbours, feature_size)
+        # for each node type (note that we can have different feature size for each node type)
+        
+        ##### Added by John #####
+        """
+        node_samples is a little complex. Will use the BWS project and num_sample = [8, 8] to do the coding.
+        That means, to make this part compatible with our num_sample, need to adapt the code further in the future
+        node_samples[0] to node_samples[2] represent features for different node layer (and different node types)
+        (also note that node_samples[n][0] is the node type, node_samples[n][1] is the actual list of nodes)
+            0: 0th layer for head node. Dimension = head_size
+            1: 1st layer of head node's neighbour nodes. Given num_sample[0] = 8, there would be 8 neighbours for each head node (Dimension = head_size x num_sample[0])
+            2: 2nd layer of head node's neighbours' neighbour nodes. Given num_sample[1] = 8, there would be 8x8 neighbours for each head node (Dimension = head_size x num_sample[0] x num_samples[1])
+        """
+        if self.weighted_feat:
+            batch_feats = []
+            
+            for i in range(len(node_samples)):
+                temp_batch_feats = []
+                nt = node_samples[i][0]
+                layer_nodes = node_samples[i][1]
+                if i == 0: # head node. No weights required
+                    batch_feats.append(self.graph.node_features(layer_nodes, nt, use_ilocs=use_ilocs))
+                    head_nodes = layer_nodes # used for i == 2
+                elif i in (1, 2): # 1st layer head node neighbours
+                    # For loop through each user head node
+                    if i == 1:
+                        temp_head_nodes = head_nodes
+                        layer_num = self.num_samples[0]
+                        nb_1st_head_nodes = layer_nodes # used for i == 4
+                    elif i == 2:
+                        temp_head_nodes = nb_1st_head_nodes
+                        layer_num = self.num_samples[1]
+                    
+                    for j in range(len(temp_head_nodes)):
+                        h_node = temp_head_nodes[j]
+                        list_temp_sampled = layer_nodes[(j*layer_num):((j+1)*layer_num)]
+                        list_weight = self._get_weight(h_node, list_temp_sampled, use_ilocs=use_ilocs)
+
+                        # Get the features from the list_temp_sampled
+                        temp_feat = self.graph.node_features(list_temp_sampled, nt, use_ilocs=use_ilocs)
+                        n_feat = temp_feat.shape[1]
+                        # Broadcast the weight of the node for multiplication
+                        list_weight_broadcast = np.repeat(list_weight, n_feat).reshape(layer_num, n_feat)
+
+                        temp_batch_feats.extend(list_weight_broadcast*temp_feat)
+
+                    batch_feats.append(np.array(temp_batch_feats))
+            
+        else:        
+            batch_feats = [
+                self.graph.node_features(layer_nodes, nt, use_ilocs=use_ilocs) # nt = node type
+                for nt, layer_nodes in node_samples
+            ]
+
+        # Resize features to (batch_size, n_neighbours, feature_size)
+        batch_feats = [np.reshape(a, (head_size, -1 if np.size(a) > 0 else 0, a.shape[1])) for a in batch_feats]
+
+        return batch_feats
 
     def sample_features(self, head_nodes, batch_num):
         """
@@ -548,17 +650,21 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
             for nt, indices in self._sampling_schema[0]
         ]
 
-        # Get features
-        batch_feats = [
-            self.graph.node_features(layer_nodes, nt, use_ilocs=True)
-            for nt, layer_nodes in nodes_by_type
-        ]
 
-        # Resize features to (batch_size, n_neighbours, feature_size)
-        batch_feats = [
-            np.reshape(a, (len(head_nodes), -1 if np.size(a) > 0 else 0, a.shape[1]))
-            for a in batch_feats
-        ]
+        ##### Added by John #####
+        batch_feats = self._get_features(nodes_by_type, len(head_nodes), use_ilocs=True)
+
+        # Get features
+        # batch_feats = [
+        #     self.graph.node_features(layer_nodes, nt, use_ilocs=True)
+        #     for nt, layer_nodes in nodes_by_type
+        # ]
+
+        # # Resize features to (batch_size, n_neighbours, feature_size)
+        # batch_feats = [
+        #     np.reshape(a, (len(head_nodes), -1 if np.size(a) > 0 else 0, a.shape[1]))
+        #     for a in batch_feats
+        # ]
 
         return batch_feats
 
