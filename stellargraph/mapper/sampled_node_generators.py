@@ -527,8 +527,11 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
             A list of weights between the source head node and the detination nodes            
         """
         list_weight = []
+        list_node_loaded = [] # Keep a record of nodes that have appeared already, and make the weight to be 0 (effectively not re-counting the same node)
         for node in list_node_samples:
-            if node == -1: # means there are no neighbour nodes, i.e., the head node does not have any connection
+            # node == -1 means there are no neighbour nodes, i.e., the head node does not have any connection
+            # if node has appeared before, then turn the weight to 0 too
+            if (node == -1) or (node in list_node_loaded):
                 list_weight.append(0)
             else:
                 # A node may be sampled several times. To adjust that, divide by the total number of the node in the list_node_samples
@@ -537,6 +540,7 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
                 # TODO: divide by the number of nodes occuring?
                 # list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0]/list_node_samples.count(node))
                 list_weight.append(self.graph._edge_weights(head_node, node, use_ilocs=use_ilocs)[0])
+                list_node_loaded.append(node)
 
         # Divide by the total weight
         # total_weight = sum(list_weight)/len(list_weight)
