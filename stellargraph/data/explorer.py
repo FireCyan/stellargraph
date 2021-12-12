@@ -257,10 +257,51 @@ class GraphWalk(object):
             else:
                 # uniform sample; for small-to-moderate `size`s (< 100 is typical for GraphSAGE), random
                 # has less overhead than np.random
-                return np.array(py_and_np_rs[0].choices(neighbours, k=size))
+                return np.array(py_and_np_rs[0].choices(neighbours, k=size))        
 
         # no neighbours (e.g. isolated node, cur_node == -1 or all weights 0), so propagate the -1 sentinel
         return np.full(size, -1)
+
+
+    def _sample_neighbours_hinsage(
+        self, ind, neigh_func, py_and_np_rs, cur_node, size, weighted
+    ):
+        """
+        Sample ``size`` neighbours of ``cur_node`` without checking node types or edge types, optionally
+        using edge weights.
+        """
+        if cur_node != -1:
+            ##### adapted by John #####
+            # To get edge type (thin edge types are encoded as integers)
+            # self.graph._edges.type_ilocs
+            neighbours = neigh_func(
+                cur_node, use_ilocs=True, include_edge_weight=weighted, edge_types=ind
+            )
+
+            if weighted:
+                neighbours, weights = neighbours
+        else:
+            neighbours = []
+
+        if len(neighbours) > 0:
+            if weighted:
+                # sample following the edge weights
+                idx = naive_weighted_choices(py_and_np_rs[1], weights, size=size)
+                # idx = naive_weighted_choices(py_and_np_rs[1].choices(neigh_et, k=size), weights, size=size)
+                if idx is not None:
+                    return neighbours[idx]
+            else:
+                # uniform sample; for small-to-moderate `size`s (< 100 is typical for GraphSAGE), random
+                # has less overhead than np.random
+                return np.array(py_and_np_rs[0].choices(neigh_et, k=size))
+                # return py_and_np_rs[0].choices(neighbours, k=size)
+
+        # else:
+        #     samples = [-1] * size
+
+        # no neighbours (e.g. isolated node, cur_node == -1 or all weights 0), so propagate the -1 sentinel
+        return np.full(size, -1)
+        # return [-1] * size
 
 
 class UniformRandomWalk(RandomWalk):
@@ -753,7 +794,7 @@ class SampledHeterogeneousBreadthFirstWalk(GraphWalk):
     It can be used to extract a random sub-graph starting from a set of initial nodes.
     """
 
-    def run(self, nodes, n_size, n=1, seed=None):
+    def run(self, nodes, n_size, n=1, seed=None, weighted=False):
         """
         Performs a sampled breadth-first walk starting from the root nodes.
 
@@ -771,7 +812,8 @@ class SampledHeterogeneousBreadthFirstWalk(GraphWalk):
         """
         self._check_sizes(n_size)
         self._check_common_parameters(nodes, n, len(n_size), seed)
-        rs, _ = self._get_random_state(seed)
+        # rs is named py_and_np_rs in SampledBreadthFirstWalk
+        rs = self._get_random_state(seed)
 
         adj = self.get_adjacency_types()
 
@@ -792,8 +834,8 @@ class SampledHeterogeneousBreadthFirstWalk(GraphWalk):
                 while len(q) > 0:
                     # remove the top element in the queue and pop the item from the front of the list
                     frontier = q.pop(0)
-                    current_node, current_node_type, depth = frontier
-                    depth = depth + 1  # the depth of the neighbouring nodes
+                    current_node, current_node_type, cur_depth = frontier
+                    depth = cur_depth + 1  # the depth of the neighbouring nodes
 
                     # consider the subgraph up to and including depth d from root node
                     if depth <= d:
@@ -801,19 +843,33 @@ class SampledHeterogeneousBreadthFirstWalk(GraphWalk):
                         current_edge_types = self.graph_schema.schema[current_node_type]
 
                         # Create samples of neigbhours for all edge types
-                        for et in current_edge_types:
+                        for ind, et in enumerate(current_edge_types):
+                            ##### TODO: Add weighted sampling here #####
+
                             neigh_et = adj[et][current_node]
+
+                            samples = self._sample_neighbours_hinsage(
+                                ind,
+                                self.graph.neighbor_arrays,
+                                rs,
+                                current_node,
+                                n_size[cur_depth],
+                                weighted,
+                            )
+
+                            samples = samples.tolist()
 
                             # If there are no neighbours of this type then we return None
                             # in the place of the nodes that would have been sampled
                             # YT update: with the new way to get neigh_et from adj[et][current_node], len(neigh_et) is always > 0.
                             # In case of no neighbours of the current node for et, neigh_et == [None],
                             # and samples automatically becomes [None]*n_size[depth-1]
-                            if len(neigh_et) > 0:
-                                samples = rs.choices(neigh_et, k=n_size[depth - 1])
-                            else:  # this doesn't happen anymore, see the comment above
-                                _size = n_size[depth - 1]
-                                samples = [-1] * _size
+                            
+                            # if len(neigh_et) > 0:
+                            #     samples = rs[0].choices(neigh_et, k=n_size[depth - 1])
+                            # else:  # this doesn't happen anymore, see the comment above
+                            #     _size = n_size[depth - 1]
+                            #     samples = [-1] * _size
 
                             walk.append(samples)
                             q.extend(

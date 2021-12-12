@@ -382,10 +382,12 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
         schema=None,
         seed=None,
         name=None,
+        weighted=False ##### John added #####
     ):
         super().__init__(G, batch_size, schema)
         self.num_samples = num_samples
         self.name = name
+        self.weighted=weighted ##### John added #####
 
         # This is a link generator and requires two nodes per query
         if head_node_types is None:
@@ -461,8 +463,9 @@ class HinSAGELinkGenerator(BatchedLinkGenerator):
 
             # Get sampled nodes for the subgraphs starting from the (src, dst) head nodes
             # nodes_samples is list of two lists: [[samples for src], [samples for dst]]
+            ##### John added weighted #####
             node_samples = self.sampler.run(
-                nodes=head_nodes, n=1, n_size=self.num_samples
+                nodes=head_nodes, n=1, n_size=self.num_samples, weighted=self.weighted
             )
 
             # Reshape node samples to the required format for the HinSAGE model
