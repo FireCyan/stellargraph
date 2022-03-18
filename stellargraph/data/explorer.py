@@ -264,7 +264,7 @@ class GraphWalk(object):
 
 
     def _sample_neighbours_hinsage(
-        self, ind, neigh_func, py_and_np_rs, cur_node, size, weighted
+        self, ind, neigh_et, neigh_func, py_and_np_rs, cur_node, size, weighted
     ):
         """
         Sample ``size`` neighbours of ``cur_node`` without checking node types or edge types, optionally
@@ -836,6 +836,12 @@ class SampledHeterogeneousBreadthFirstWalk(GraphWalk):
                     frontier = q.pop(0)
                     current_node, current_node_type, cur_depth = frontier
                     depth = cur_depth + 1  # the depth of the neighbouring nodes
+                    
+                    ##### Added by John #####
+                    if weighted and current_node_type == 'item':
+                        weighted = False
+                    elif weighted and current_node_type == 'user':
+                        weighted = True
 
                     # consider the subgraph up to and including depth d from root node
                     if depth <= d:
@@ -850,6 +856,7 @@ class SampledHeterogeneousBreadthFirstWalk(GraphWalk):
 
                             samples = self._sample_neighbours_hinsage(
                                 ind,
+                                neigh_et,
                                 self.graph.neighbor_arrays,
                                 rs,
                                 current_node,

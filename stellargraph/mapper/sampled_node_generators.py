@@ -484,11 +484,13 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
         schema=None,
         seed=None,
         name=None,
+        weighted=False
     ):
         super().__init__(G, batch_size, schema=schema)
 
         self.num_samples = num_samples
         self.name = name
+        self.weighted = weighted
 
         # The head node type
         if head_node_type is None:
@@ -532,7 +534,9 @@ class HinSAGENodeGenerator(BatchedNodeGenerator):
             for that layer.
         """
         # Get sampled nodes
-        node_samples = self.sampler.run(nodes=head_nodes, n=1, n_size=self.num_samples)
+        node_samples = self.sampler.run(
+            nodes=head_nodes, n=1, n_size=self.num_samples, weighted=self.weighted
+        )
 
         # Reshape node samples to the required format for the HinSAGE model
         # This requires grouping the sampled nodes by edge type and in order
